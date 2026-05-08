@@ -268,7 +268,6 @@ def _troitzky_win_possible(defender_color: int, pawn_sq: int) -> bool:
         return pawn_sq // 8 >= _TROITZKY_BLACK[file]
 def _eval_kbnk(board, winner: int, loser: int) -> int:
     bishop_bb = board.pieces[winner][B]
-    bishop_bb.bit_length() - 1
     bishop_is_dark = bool(bishop_bb & _DARK_SQ)
     ek_sq = board.pieces[loser][K].bit_length() - 1
     ok_sq = board.pieces[winner][K].bit_length() - 1
@@ -335,8 +334,6 @@ def _eval_knnkp(board, attacker: int, defender: int, pawn_sq: int) -> int:
 def evaluate(board) -> int:
     pW = board.pieces[WHITE]
     pB = board.pieces[BLACK]
-    board.occ[WHITE]
-    board.occ[BLACK]
     occ = board.all_occ
     turn = board.turn
     phase = 0
@@ -347,6 +344,7 @@ def evaluate(board) -> int:
     skip_psqt_black = _has_mating_material(board, BLACK)
     score_mg = 0
     score_eg = 0
+    _ZERO_PSQ = [0] * 64
     for c in (WHITE, BLACK):
         sign = 1 if c == WHITE else -1
         skip = skip_psqt_white if c == WHITE else skip_psqt_black
@@ -355,7 +353,7 @@ def evaluate(board) -> int:
             bb = pp[pc]
             mat_mg = MAT_MG[pc]
             mat_eg = MAT_EG[pc]
-            psqt_tbl = PSQT[pc] if not skip else [0] * 64
+            psqt_tbl = _ZERO_PSQ if skip else PSQT[pc]
             while bb:
                 sq = _lsb(bb)
                 bb &= bb - 1
@@ -556,7 +554,7 @@ def evaluate(board) -> int:
             elif mob <= 3:
                 kf = ksq_us % 8
                 if (kf < 4) == (file_of_sq < kf):
-                    can_castle = bool(board.castling & (1 if c == WHITE else 4 | 8))
+                    can_castle = bool(board.castling & (1 if c == WHITE else 12))
                     mult = 1 if can_castle else 2
                     piece_score_mg -= sign * _mg(_TRAPPED_ROOK) * mult
                     piece_score_eg -= sign * _eg(_TRAPPED_ROOK) * mult
@@ -665,13 +663,13 @@ def evaluate(board) -> int:
                             tmp = tmp >> 8
                         fwd |= tmp
                     unsafe = fwd & atk[them][ALL]
-                    if unsafe:
-                        if unsafe & _BB_SQ[block_sq]:
-                            k = 0
-                        elif unsafe:
-                            k = 9
+                    block_attacked = bool(atk[them][ALL] & _BB_SQ[block_sq])
+                    if block_attacked:
+                        k = 0
+                    elif unsafe:
+                        k = 9
                     else:
-                        k = 20 if not unsafe else k
+                        k = 20
                     if atk[c][ALL] & _BB_SQ[block_sq] or board.occ[c] & fwd:
                         k += 5
                     bmg += k * w
@@ -825,7 +823,6 @@ def evaluate(board) -> int:
             sq = (tmp & -tmp).bit_length() - 1
             tmp &= tmp - 1
             f = sq % 8
-            sq // 8
             stop = sq + 8 if c == WHITE else sq - 8
             if stop < 0 or stop > 63:
                 continue
