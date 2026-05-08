@@ -61,7 +61,7 @@ def _full_score(board):
     return (w, bl)
 def _score_delta(board, move):
     us = board.turn
-    us ^ 1
+    them = us ^ 1
     fr = move & 63
     to = move >> 6 & 63
     pc = move >> 16 & 7
@@ -154,7 +154,7 @@ def _delta_hash(board, move: int, old_h: int) -> int:
     zpc_us = pc + (0 if us == WHITE else 6)
     h ^= zp[zpc_us][fr] ^ zp[zpc_us][to]
     if mt == 1:
-        h ^= ze[ep64] ^ ze[fr + to >> 1]
+        h ^= ze[ep64] ^ ze[(fr + to) >> 1]
     elif mt == 5:
         h ^= zp[P + (0 if them == WHITE else 6)][old_ep + (-8 if us == WHITE else 8)]
         h ^= ze[ep64] ^ ze[64]
@@ -591,7 +591,7 @@ class Searcher:
             if qsc < alpha:
                 return qsc
         if not in_check and depth <= RFP_MAX_D and (static_eval - RFP_MARGIN * depth >= beta) and (abs(beta) < MATE_SCORE - 100):
-            return static_eval
+            return beta
         if not in_check and depth >= PROBCUT_MIN_D and (abs(beta) < MATE_SCORE - 100):
             pc_beta = beta + PROBCUT_BETA
             see_threshold = pc_beta - static_eval
@@ -871,7 +871,7 @@ class Searcher:
             remaining = self._end_time - time.time()
             if remaining <= 0:
                 break
-            if elapsed > think_time_sec * 0.6 and self._best_move_changes == 0:
+            if elapsed > think_time_sec * 0.6 and self._best_move_changes == 0 and depth >= 4:
                 break
             if elapsed > think_time_sec * 0.5 and self._best_move_changes >= 3:
                 self._end_time = min(self._start_time + think_time_sec * 2.0, self._end_time + think_time_sec * 0.5)
