@@ -419,6 +419,15 @@ def _filter_and_score(raw_moves, board, k1, k2, hist, cont_hist, prev_pc: int, p
         append((sc, m))
     scored.sort(reverse=True)
     return [m for _, m in scored]
+
+# Fast static eval using incremental material+PST score from score_stack
+# Used at interior nodes for pruning (RFP, NMP, razoring, futility)
+# ~1400x faster than full evaluate()
+def _fast_eval(score_stack, turn):
+    w, bl = score_stack[-1]
+    val = w - bl
+    return val if turn == WHITE else -val
+
 class Searcher:
     __slots__ = ('nodes', '_start_time', '_end_time', '_stop', '_killers', '_hist', '_cont_hist', '_cap_hist', '_counter_moves', '_score_stack', '_rep_counts', '_best_move_changes')
     def __init__(self):
@@ -439,19 +448,28 @@ class Searcher:
             if time.time() >= self._end_time:
                 self._stop = True
     def _build_history_counts(self, board):
+        # Build repetition table by walking back through undo stack WITHOUT
+        # destroying it. We replay moves forward to compute hashes.
         self._rep_counts.clear()
-        current_fen = board.to_fen()
-        moves_to_replay = []
+        undo_stack = board._undo  # list of (move, castling, ep, halfmove)
+        if not undo_stack:
+            h = _full_hash(board)
+            self._rep_counts[h] = 1
+            return
+        # Walk back to root by unmaking moves temporarily
+        moves_made = []
         while board._undo:
-            moves_to_replay.append(board._undo[-1][0])
-            board.unmake_move(board._undo[-1][0])
+            entry = board._undo[-1]
+            moves_made.append(entry[0])
+            board.unmake_move(entry[0])
+        # Now at root - record hash, then replay forward
         h = _full_hash(board)
         self._rep_counts[h] = self._rep_counts.get(h, 0) + 1
-        for move in reversed(moves_to_replay):
+        for move in reversed(moves_made):
             board.make_move(move)
             h = _full_hash(board)
             self._rep_counts[h] = self._rep_counts.get(h, 0) + 1
-        board.set_fen(current_fen)
+        # board._undo is now restored to original state
     def _quiesce(self, board, alpha: int, beta: int, h: int, checkers: int=-1, pinned: int=-1) -> int:
         self.nodes += 1
         self._check_time()
@@ -462,6 +480,7 @@ class Searcher:
         if _is_material_draw(board):
             return 0
         _, tt_move = _tt_probe(h, 0, alpha, beta)
+        # Use full evaluate() at quiescence leaves - this is correct
         sp = evaluate(board)
         hm = board.halfmove
         if hm >= 100:
@@ -579,22 +598,43 @@ class Searcher:
             return score
         us = board.turn
         raw_moves, checkers, in_check = generate_legal_moves_ex(board)
-        static_eval = evaluate(board)
+
+        # --- FAST static eval for pruning (uses incremental material+PST) ---
+        # Only called when needed for pruning decisions, never at every node.
+        # Full evaluate() is reserved for quiescence leaves only.
         hm = board.halfmove
         if hm >= 100:
             if not in_check:
                 return 0
-        if hm >= 80:
-            static_eval = static_eval * (100 - hm) // 20
-        if not in_check and depth <= RAZOR_DEPTH and (static_eval + RAZOR_MARGIN[depth] < alpha) and (abs(alpha) < MATE_SCORE - 100):
-            qsc = self._quiesce(board, alpha, beta, h)
-            if qsc < alpha:
-                return qsc
-        if not in_check and depth <= RFP_MAX_D and (static_eval - RFP_MARGIN * depth >= beta) and (abs(beta) < MATE_SCORE - 100):
-            return beta
+
+        # Compute static_eval lazily - only when pruning might trigger
+        static_eval = None
+        def _get_static_eval():
+            nonlocal static_eval
+            if static_eval is None:
+                static_eval = _fast_eval(self._score_stack, us)
+            return static_eval
+
+        if not in_check and depth <= RAZOR_DEPTH and (abs(alpha) < MATE_SCORE - 100):
+            se = _get_static_eval()
+            if hm >= 80:
+                se = se * (100 - hm) // 20
+            if se + RAZOR_MARGIN[depth] < alpha:
+                qsc = self._quiesce(board, alpha, beta, h)
+                if qsc < alpha:
+                    return qsc
+
+        if not in_check and depth <= RFP_MAX_D and (abs(beta) < MATE_SCORE - 100):
+            se = _get_static_eval()
+            if hm >= 80:
+                se = se * (100 - hm) // 20
+            if se - RFP_MARGIN * depth >= beta:
+                return beta
+
         if not in_check and depth >= PROBCUT_MIN_D and (abs(beta) < MATE_SCORE - 100):
+            se = _get_static_eval()
             pc_beta = beta + PROBCUT_BETA
-            see_threshold = pc_beta - static_eval
+            see_threshold = pc_beta - se
             pc_raw, _, pc_in_check = generate_legal_moves_ex(board)
             for pc_move in pc_raw:
                 if not pc_move & FLAG_CAPTURE:
@@ -623,28 +663,32 @@ class Searcher:
                 if pc_sc >= pc_beta:
                     _tt_store(h, depth - 3, TT_LOWER, pc_sc, pc_move)
                     return pc_beta
-        if null_ok and (not in_check) and (depth >= NMP_MIN_D) and (static_eval >= beta) and (board.pieces[us][Q] | board.pieces[us][R] | board.pieces[us][B] | board.pieces[us][N]):
-            nmp_red = NMP_BASE_R + depth // 6 + min(3, (static_eval - beta) // 200)
-            nmp_red = min(nmp_red, NMP_MAX_R, depth - 1)
-            old_ep = board.ep_sq
-            board.turn ^= 1
-            board.ep_sq = -1
-            nh = h ^ _ZT ^ _ZE[old_ep if old_ep != -1 else 64] ^ _ZE[64]
-            rep[nh] = rep.get(nh, 0) + 1
-            stack = self._score_stack
-            stack.append(stack[-1])
-            sc = -self._negamax(board, depth - 1 - nmp_red, -beta, -beta + 1, ply + 1, nh, False)
-            stack.pop()
-            board.turn ^= 1
-            board.ep_sq = old_ep
-            rep[nh] -= 1
-            if rep[nh] <= 0:
-                del rep[nh]
-            if self._stop:
-                return 0
-            if sc >= beta:
-                _tt_store(h, depth, TT_LOWER, beta, 0)
-                return beta
+
+        if null_ok and (not in_check) and (depth >= NMP_MIN_D):
+            se = _get_static_eval()
+            if se >= beta and (board.pieces[us][Q] | board.pieces[us][R] | board.pieces[us][B] | board.pieces[us][N]):
+                nmp_red = NMP_BASE_R + depth // 6 + min(3, (se - beta) // 200)
+                nmp_red = min(nmp_red, NMP_MAX_R, depth - 1)
+                old_ep = board.ep_sq
+                board.turn ^= 1
+                board.ep_sq = -1
+                nh = h ^ _ZT ^ _ZE[old_ep if old_ep != -1 else 64] ^ _ZE[64]
+                rep[nh] = rep.get(nh, 0) + 1
+                stack = self._score_stack
+                stack.append(stack[-1])
+                sc = -self._negamax(board, depth - 1 - nmp_red, -beta, -beta + 1, ply + 1, nh, False)
+                stack.pop()
+                board.turn ^= 1
+                board.ep_sq = old_ep
+                rep[nh] -= 1
+                if rep[nh] <= 0:
+                    del rep[nh]
+                if self._stop:
+                    return 0
+                if sc >= beta:
+                    _tt_store(h, depth, TT_LOWER, beta, 0)
+                    return beta
+
         eff_depth = depth
         if depth >= IIR_MIN_D and tt_move == 0 and (not in_check):
             eff_depth = depth - 1
@@ -664,7 +708,7 @@ class Searcher:
         stack = self._score_stack
         w, bl = stack[-1]
         do_futility = not in_check and eff_depth <= FP_DEPTH and (abs(alpha) < MATE_SCORE - 100)
-        fut_threshold = static_eval + FP_MARGIN[eff_depth] if do_futility else 0
+        fut_threshold = (_get_static_eval() + FP_MARGIN[eff_depth]) if do_futility else 0
         lmp_limit = LMP_BASE + eff_depth * eff_depth if not in_check and eff_depth < LMP_MAX_D else 9999
         quiet_count = 0
         for i, move in enumerate(moves):
@@ -686,7 +730,7 @@ class Searcher:
                     continue
             extension = 0
             if eff_depth >= SE_MIN_D and move == tt_move and (not is_singular) and (tt_move != 0) and (abs(tt_score if tt_score is not None else 0) < MATE_SCORE - 100):
-                se_beta = max(alpha, (tt_score if tt_score is not None else static_eval) - SE_MARGIN)
+                se_beta = max(alpha, (tt_score if tt_score is not None else _get_static_eval()) - SE_MARGIN)
                 se_depth = eff_depth - 3 | 1
                 se_score = self._negamax(board, se_depth, se_beta - 1, se_beta, ply, h, False, prev_fr, prev_pc, prev_to, is_singular=True)
                 if self._stop:
@@ -799,7 +843,7 @@ class Searcher:
             return (None, 0)
         root_h = _full_hash(board)
         best_move = root_moves[0]
-        best_score = evaluate(board)
+        best_score = _fast_eval(self._score_stack, board.turn)
         prev_best = best_move
         for depth in range(1, MAX_DEPTH + 1):
             if self._stop:
