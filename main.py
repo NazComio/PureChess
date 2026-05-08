@@ -151,7 +151,8 @@ CASTLE_RIGHTS_MASK[H1] &= ~CASTLE_WK
 CASTLE_RIGHTS_MASK[A1] &= ~CASTLE_WQ
 CASTLE_RIGHTS_MASK[E8] &= ~(CASTLE_BK | CASTLE_BQ)
 CASTLE_RIGHTS_MASK[H8] &= ~CASTLE_BK
-CASTLE_RIGHTS_MASK[A8] &= ~CASTLE_BQMT_QUIET = 0 << 12
+CASTLE_RIGHTS_MASK[A8] &= ~CASTLE_BQ
+MT_QUIET = 0 << 12
 MT_DOUBLE_PUSH = 1 << 12
 MT_KING_CASTLE = 2 << 12
 MT_QUEEN_CASTLE = 3 << 12
@@ -210,7 +211,8 @@ def move_to_uci(move: int) -> str:
     uci = _FILE_CHARS[f % 8] + _RANK_CHARS[f // 8] + _FILE_CHARS[t % 8] + _RANK_CHARS[t // 8]
     if move & FLAG_PROMO:
         uci += _PROMO_CHARS.get(promo_piece(move), '')
-    return uci_P16 = P << 16
+    return uci
+_P16 = P << 16
 _N16 = N << 16
 _B16 = B << 16
 _R16 = R << 16
@@ -1041,7 +1043,8 @@ def generate_captures_from_info(board, checkers, pinned):
     _gen_bishop_moves(board, us, them, pinned, king_sq, cap_mask, ml)
     _gen_rook_moves(board, us, them, pinned, king_sq, cap_mask, ml)
     _gen_queen_moves(board, us, them, pinned, king_sq, cap_mask, ml)
-    return mlclass Board:
+    return ml
+class Board:
     __slots__ = ('pieces', 'occ', 'all_occ', 'turn', 'castling', 'ep_sq', 'halfmove', 'fullmove', '_undo', 'piece_at')
     def __init__(self):
         self.pieces = [[0] * 6, [0] * 6]
@@ -1291,7 +1294,8 @@ def generate_captures_from_info(board, checkers, pinned):
         rows.append('  a b c d e f g h')
         turn_str = 'White' if self.turn == WHITE else 'Black'
         rows.append(f'Turn: {turn_str} | Castling: {self.castling:04b} | EP: {self.ep_sq}')
-        return '\n'.join(rows)_RAY_N_IDX = 0
+        return '\n'.join(rows)
+_RAY_N_IDX = 0
 _RAY_NE_IDX = 1
 _RAY_E_IDX = 2
 _RAY_SE_IDX = 3
@@ -2359,7 +2363,8 @@ _B_MG = [list(t) for t in _RAW_MG_TABLES]
 MG_TABLES = [_W_MG, _B_MG]
 _W_EG = [list(t) for t in _RAW_EG_TABLES]
 _B_EG = [list(t) for t in _RAW_EG_TABLES]
-EG_TABLES = [_W_EG, _B_EG]MATE_SCORE = 100000
+EG_TABLES = [_W_EG, _B_EG]
+MATE_SCORE = 100000
 INF = MATE_SCORE + 1
 MAX_DEPTH = 64
 TT_SIZE = 1 << 22
@@ -3231,7 +3236,8 @@ class Searcher:
                 break
             if elapsed > think_time_sec * 0.5 and self._best_move_changes >= 3:
                 self._end_time = min(self._start_time + think_time_sec * 2.0, self._end_time + think_time_sec * 0.5)
-        return (best_move, best_score)def get_normalized_fen(board):
+        return (best_move, best_score)
+def get_normalized_fen(board):
     full_fen = board.to_fen()
     return ' '.join(full_fen.split()[:4])
 def parse_time_to_ms(t_str):
