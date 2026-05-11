@@ -6,7 +6,6 @@ A high-performance, UCI-compatible chess engine written in **Python 3.10+**. Pur
 - **Modern Python:** Leverages Python 3.10+ features and optimized bitwise operations.
 - **UCI Support:** Fully compatible with the Universal Chess Interface (UCI) for use in GUIs like Arena, Cute Chess, and Banksia.
 - **Bitboard Engine:** Uses 64-bit integer bitboards with precomputed attack tables for high-speed move generation.
-- **Status:** Currently undergoing CCRL testing.
 
 ## Technical Architecture
 
