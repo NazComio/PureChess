@@ -1,7 +1,10 @@
 from constants import P, N, B, R, Q, K, WHITE, BLACK, FULL_BOARD, CASTLE_WK, CASTLE_WQ, CASTLE_BK, CASTLE_BQ, CASTLE_ROOK_FROM, CASTLE_ROOK_TO, CASTLE_RIGHTS_MASK
 from move_encoding import move_type, promo_piece, MT_KING_CASTLE, MT_QUEEN_CASTLE, MT_EP_CAPTURE, FLAG_PROMO
+from evaluation import pst_score, MAT_MG, MAT_EG, PHASE_WEIGHT, PHASE_MAX, PST_MG_W, PST_MG_B, PST_EG_W, PST_EG_B
+_popcount = int.bit_count
 class Board:
-    __slots__ = ('pieces', 'occ', 'all_occ', 'turn', 'castling', 'ep_sq', 'halfmove', 'fullmove', '_undo', 'piece_at')
+    __slots__ = ('pieces', 'occ', 'all_occ', 'turn', 'castling', 'ep_sq', 'halfmove', 'fullmove', '_undo', 'piece_at',
+                 'mg_score', 'eg_score', 'phase_total')
     def __init__(self):
         self.pieces = [[0] * 6, [0] * 6]
         self.occ = [0, 0]
@@ -13,6 +16,9 @@ class Board:
         self.fullmove = 1
         self._undo = []
         self.piece_at = [-1] * 64
+        self.mg_score = 0
+        self.eg_score = 0
+        self.phase_total = 0
     @classmethod
     def from_start(cls):
         b = cls()
@@ -23,13 +29,34 @@ class Board:
         b = cls()
         b.set_fen(fen)
         return b
+    def _recalc_scores(self):
+        self.mg_score = 0
+        self.eg_score = 0
+        self.phase_total = 0
+        for color in (WHITE, BLACK):
+            pst_mg = PST_MG_W if color == WHITE else PST_MG_B
+            pst_eg = PST_EG_W if color == WHITE else PST_EG_B
+            sign = 1 if color == WHITE else -1
+            for pc in range(6):
+                mat_mg = MAT_MG[pc]
+                mat_eg = MAT_EG[pc]
+                pw = PHASE_WEIGHT[pc] if pc != P and pc != K else 0
+                pc64 = pc * 64
+                bb = self.pieces[color][pc]
+                while bb:
+                    sq = (bb & -bb).bit_length() - 1
+                    self.mg_score += sign * (pst_mg[pc64 + sq] + mat_mg)
+                    self.eg_score += sign * (pst_eg[pc64 + sq] + mat_eg)
+                    self.phase_total += sign * pw
+                    bb &= bb - 1
     def set_fen(self, fen: str):
         parts = fen.split()
         self.pieces = [[0] * 6, [0] * 6]
         self.occ = [0, 0]
         self.all_occ = 0
         self.piece_at = [-1] * 64
-        piece_map = {'P': (WHITE, P), 'N': (WHITE, N), 'B': (WHITE, B), 'R': (WHITE, R), 'Q': (WHITE, Q), 'K': (WHITE, K), 'p': (BLACK, P), 'n': (BLACK, N), 'b': (BLACK, B), 'r': (BLACK, R), 'q': (BLACK, Q), 'k': (BLACK, K)}
+        piece_map = {'P': (WHITE, P), 'N': (WHITE, N), 'B': (WHITE, B), 'R': (WHITE, R), 'Q': (WHITE, Q), 'K': (WHITE, K),
+                     'p': (BLACK, P), 'n': (BLACK, N), 'b': (BLACK, B), 'r': (BLACK, R), 'q': (BLACK, Q), 'k': (BLACK, K)}
         rank = 7
         file = 0
         for ch in parts[0]:
@@ -68,6 +95,7 @@ class Board:
         self.halfmove = int(parts[4]) if len(parts) > 4 else 0
         self.fullmove = int(parts[5]) if len(parts) > 5 else 1
         self._undo = []
+        self._recalc_scores()
     def to_fen(self) -> str:
         piece_chars = [['P', 'N', 'B', 'R', 'Q', 'K'], ['p', 'n', 'b', 'r', 'q', 'k']]
         rows = []
@@ -117,6 +145,17 @@ class Board:
         self.occ[color] |= bb
         self.all_occ |= bb
         self.piece_at[sq] = pc
+        base = pc * 64 + sq
+        if color == WHITE:
+            self.mg_score += PST_MG_W[base] + MAT_MG[pc]
+            self.eg_score += PST_EG_W[base] + MAT_EG[pc]
+            if pc != P and pc != K:
+                self.phase_total += PHASE_WEIGHT[pc]
+        else:
+            self.mg_score -= PST_MG_B[base] + MAT_MG[pc]
+            self.eg_score -= PST_EG_B[base] + MAT_EG[pc]
+            if pc != P and pc != K:
+                self.phase_total -= PHASE_WEIGHT[pc]
     def _remove_piece(self, color: int, pc: int, sq: int):
         bb = 1 << sq
         nbb = ~bb & FULL_BOARD
@@ -124,6 +163,17 @@ class Board:
         self.occ[color] &= nbb
         self.all_occ &= nbb
         self.piece_at[sq] = -1
+        base = pc * 64 + sq
+        if color == WHITE:
+            self.mg_score -= PST_MG_W[base] + MAT_MG[pc]
+            self.eg_score -= PST_EG_W[base] + MAT_EG[pc]
+            if pc != P and pc != K:
+                self.phase_total -= PHASE_WEIGHT[pc]
+        else:
+            self.mg_score += PST_MG_B[base] + MAT_MG[pc]
+            self.eg_score += PST_EG_B[base] + MAT_EG[pc]
+            if pc != P and pc != K:
+                self.phase_total += PHASE_WEIGHT[pc]
     def _move_piece(self, color: int, pc: int, fr: int, to: int):
         bb_fr = 1 << fr
         bb_to = 1 << to
@@ -133,6 +183,13 @@ class Board:
         self.all_occ ^= toggle
         self.piece_at[fr] = -1
         self.piece_at[to] = pc
+        pc64 = pc * 64
+        if color == WHITE:
+            self.mg_score += PST_MG_W[pc64 + to] - PST_MG_W[pc64 + fr]
+            self.eg_score += PST_EG_W[pc64 + to] - PST_EG_W[pc64 + fr]
+        else:
+            self.mg_score -= PST_MG_B[pc64 + to] - PST_MG_B[pc64 + fr]
+            self.eg_score -= PST_EG_B[pc64 + to] - PST_EG_B[pc64 + fr]
     def make_move(self, move: int):
         self._undo.append((move, self.castling, self.ep_sq, self.halfmove))
         us = self.turn
@@ -151,7 +208,7 @@ class Board:
                 self.halfmove = 0
         elif mt == 1 << 12:
             self._move_piece(us, pc, fr, to)
-            self.ep_sq = fr + to >> 1
+            self.ep_sq = (fr + to) >> 1
             self.halfmove = 0
         elif mt == MT_KING_CASTLE:
             rf = CASTLE_ROOK_FROM[CASTLE_WK if us == WHITE else CASTLE_BK]
