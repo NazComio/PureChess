@@ -40,7 +40,7 @@ A robust **Negamax with Alpha-Beta Pruning** framework including:
 ## Usage
 
 ### GUI Integration
-1. Load the `PureChess.exe` (or the Python source) into any UCI-compatible GUI.
+1. Load the `PureChess 1.1.exe` into any UCI-compatible GUI.
 2. The engine respects standard time control commands (`wtime`, `btime`, `movetime`, `depth`).
 
 ## License
