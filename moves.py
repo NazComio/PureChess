@@ -1,5 +1,6 @@
 from constants import P, N, B, R, Q, K, WHITE, BLACK, BB_SQUARES, FULL_BOARD, NOT_FILE_A, NOT_FILE_H, RANK_1, RANK_2, RANK_3, RANK_6, RANK_7, RANK_8, KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, RAYS, BETWEEN, LINE, CASTLE_WK, CASTLE_WQ, CASTLE_BK, CASTLE_BQ, CASTLE_EMPTY
 from move_encoding import MT_QUIET, MT_DOUBLE_PUSH, MT_KING_CASTLE, MT_QUEEN_CASTLE, MT_CAPTURE, MT_EP_CAPTURE, MT_KNIGHT_PROMO, MT_BISHOP_PROMO, MT_ROOK_PROMO, MT_QUEEN_PROMO, MT_KNIGHT_PROMO_C, MT_BISHOP_PROMO_C, MT_ROOK_PROMO_C, MT_QUEEN_PROMO_C
+_BL = int.bit_length
 _P16 = P << 16
 _N16 = N << 16
 _B16 = B << 16
@@ -165,34 +166,82 @@ def get_attack_info(board, us, king_sq):
     pQ = pt[Q]
     diag = pB | pQ
     orth = pR | pQ
-    pinned = 0
     checkers = _PA[us][king_sq] & pt[P] | _KA[king_sq] & pN
-    rays = _RAYS
-    for d, slider in ((0, orth), (2, orth), (1, diag), (7, diag)):
-        ray = rays[d][king_sq]
-        if ray and slider:
-            bl = ray & occ
-            if bl:
-                f = bl & -bl
-                if f & slider:
-                    checkers |= f
-                elif f & our_occ:
-                    be = ray & ~((f << 1) - 1) & ~f & occ
-                    if be and be & -be & slider:
-                        pinned |= f
-    for d, slider in ((4, orth), (6, orth), (5, diag), (3, diag)):
-        ray = rays[d][king_sq]
-        if ray and slider:
-            bl = ray & occ
-            if bl:
-                f = 1 << bl.bit_length() - 1
-                if f & slider:
-                    checkers |= f
-                elif f & our_occ:
-                    fs = f.bit_length() - 1
-                    bb2 = ray & (1 << fs) - 1 & occ
-                    if bb2 and 1 << bb2.bit_length() - 1 & slider:
-                        pinned |= f
+    if not (diag | orth):
+        return checkers, 0
+    pinned = 0
+    _RN = _RAYS[0][king_sq]; _RE = _RAYS[2][king_sq]
+    _RS = _RAYS[4][king_sq]; _RW = _RAYS[6][king_sq]
+    _RNE = _RAYS[1][king_sq]; _RSE = _RAYS[3][king_sq]
+    _RSW = _RAYS[5][king_sq]; _RNW = _RAYS[7][king_sq]
+    if orth and _RN:
+        bl = _RN & occ
+        if bl:
+            f = bl & -bl
+            if f & orth: checkers |= f
+            elif f & our_occ:
+                be = _RN & ~((f << 1) - 1) & ~f & occ
+                if be and be & -be & orth: pinned |= f
+    if orth and _RE:
+        bl = _RE & occ
+        if bl:
+            f = bl & -bl
+            if f & orth: checkers |= f
+            elif f & our_occ:
+                be = _RE & ~((f << 1) - 1) & ~f & occ
+                if be and be & -be & orth: pinned |= f
+    if diag and _RNE:
+        bl = _RNE & occ
+        if bl:
+            f = bl & -bl
+            if f & diag: checkers |= f
+            elif f & our_occ:
+                be = _RNE & ~((f << 1) - 1) & ~f & occ
+                if be and be & -be & diag: pinned |= f
+    if diag and _RNW:
+        bl = _RNW & occ
+        if bl:
+            f = bl & -bl
+            if f & diag: checkers |= f
+            elif f & our_occ:
+                be = _RNW & ~((f << 1) - 1) & ~f & occ
+                if be and be & -be & diag: pinned |= f
+    if orth and _RS:
+        bl = _RS & occ
+        if bl:
+            f = 1 << bl.bit_length() - 1
+            if f & orth: checkers |= f
+            elif f & our_occ:
+                fs = f.bit_length() - 1
+                bb2 = _RS & (1 << fs) - 1 & occ
+                if bb2 and 1 << bb2.bit_length() - 1 & orth: pinned |= f
+    if orth and _RW:
+        bl = _RW & occ
+        if bl:
+            f = 1 << bl.bit_length() - 1
+            if f & orth: checkers |= f
+            elif f & our_occ:
+                fs = f.bit_length() - 1
+                bb2 = _RW & (1 << fs) - 1 & occ
+                if bb2 and 1 << bb2.bit_length() - 1 & orth: pinned |= f
+    if diag and _RSE:
+        bl = _RSE & occ
+        if bl:
+            f = 1 << bl.bit_length() - 1
+            if f & diag: checkers |= f
+            elif f & our_occ:
+                fs = f.bit_length() - 1
+                bb2 = _RSE & (1 << fs) - 1 & occ
+                if bb2 and 1 << bb2.bit_length() - 1 & diag: pinned |= f
+    if diag and _RSW:
+        bl = _RSW & occ
+        if bl:
+            f = 1 << bl.bit_length() - 1
+            if f & diag: checkers |= f
+            elif f & our_occ:
+                fs = f.bit_length() - 1
+                bb2 = _RSW & (1 << fs) - 1 & occ
+                if bb2 and 1 << bb2.bit_length() - 1 & diag: pinned |= f
     return (checkers, pinned)
 def get_checkers(board, us, king_sq):
     them = us ^ 1
@@ -223,7 +272,6 @@ def _gen_pawn_moves(board, us, them, pinned, king_sq, check_mask, ml):
     BKPC = _BKPC
     RKPC = _RKPC
     QKPC = _QKPC
-    append = ml.append
     if us == WHITE:
         single = pawns << 8 & ~occ & FULL
         double = (single & _R3) << 8 & ~occ
@@ -254,67 +302,67 @@ def _gen_pawn_moves(board, us, them, pinned, king_sq, check_mask, ml):
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - fwd
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
-        append(fr | to << 6 | _MT_Q | _P16)
+        ml.append(fr | to << 6 | _MT_Q | _P16)
     bb = double & check_mask
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - fwd2
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
-        append(fr | to << 6 | _MT_DP | _P16)
+        ml.append(fr | to << 6 | _MT_DP | _P16)
     bb = single & promo & check_mask
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - fwd
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
         base = fr | to << 6 | _P16
-        append(base | NKP)
-        append(base | BKP)
-        append(base | RKP)
-        append(base | QKP)
+        ml.append(base | NKP)
+        ml.append(base | BKP)
+        ml.append(base | RKP)
+        ml.append(base | QKP)
     bb = cl & check_mask
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - cl_off
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
         cap_pc = pat[to]
         if lsb & promo:
             base = fr | to << 6 | _P16 | cap_pc << 19
-            append(base | NKPC)
-            append(base | BKPC)
-            append(base | RKPC)
-            append(base | QKPC)
+            ml.append(base | NKPC)
+            ml.append(base | BKPC)
+            ml.append(base | RKPC)
+            ml.append(base | QKPC)
         else:
-            append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
+            ml.append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
     bb = cr & check_mask
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - cr_off
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
         cap_pc = pat[to]
         if lsb & promo:
             base = fr | to << 6 | _P16 | cap_pc << 19
-            append(base | NKPC)
-            append(base | BKPC)
-            append(base | RKPC)
-            append(base | QKPC)
+            ml.append(base | NKPC)
+            ml.append(base | BKPC)
+            ml.append(base | RKPC)
+            ml.append(base | QKPC)
         else:
-            append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
+            ml.append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
     if el or er:
         p_them = board.pieces[them]
         pB_t = p_them[B]
@@ -329,7 +377,7 @@ def _gen_pawn_moves(board, us, them, pinned, king_sq, check_mask, ml):
             while bb2:
                 lsb = bb2 & -bb2
                 bb2 ^= lsb
-                to = lsb.bit_length() - 1
+                to = _BL(lsb) - 1
                 fr = to - off
                 cap_sq = to - fwd
                 occ2 = occ ^ BB2[fr] ^ BB2[cap_sq] | BB2[to]
@@ -339,9 +387,27 @@ def _gen_pawn_moves(board, us, them, pinned, king_sq, check_mask, ml):
                 orth2 = pR_t | pQ_t
                 if orth2 and RT[king_sq][occ2 & RMK[king_sq]] & orth2:
                     continue
-                append(fr | to << 6 | _MT_EP | _P16)
+                ml.append(fr | to << 6 | _MT_EP | _P16)
+def _build_knight_quiet_moves():
+    table = []
+    N16 = N << 16
+    MT_Q = MT_QUIET
+    KA = KNIGHT_ATTACKS
+    for fr in range(64):
+        targets = KA[fr]
+        moves = []
+        bb = targets
+        while bb:
+            lsb = bb & -bb
+            bb ^= lsb
+            to = lsb.bit_length() - 1
+            moves.append((lsb, fr | to << 6 | MT_Q | N16))
+        table.append(moves)
+    return table
+_KNIGHT_QUIET_MOVES = _build_knight_quiet_moves()
 def _gen_knight_moves(board, us, them, pinned, check_mask, ml):
-    knights = board.pieces[us][N] & ~pinned
+    pu = board.pieces[us]
+    knights = pu[N] & ~pinned
     if not knights:
         return
     tocc = board.occ[them]
@@ -351,25 +417,25 @@ def _gen_knight_moves(board, us, them, pinned, check_mask, ml):
     MT_CAP = _MT_CAP
     MT_Q = _MT_Q
     N16 = _N16
-    append = ml.append
     while knights:
         lsb = knights & -knights
         knights ^= lsb
-        fr = lsb.bit_length() - 1
+        fr = _BL(lsb) - 1
         targets = KA[fr] & ~nocc & check_mask
         caps = targets & tocc
         quiets = targets ^ caps
         while caps:
             alb = caps & -caps
             caps ^= alb
-            to = alb.bit_length() - 1
-            append(fr | to << 6 | MT_CAP | N16 | pat[to] << 19)
+            to = _BL(alb) - 1
+            ml.append(fr | to << 6 | MT_CAP | N16 | pat[to] << 19)
         while quiets:
             alb = quiets & -quiets
             quiets ^= alb
-            append(fr | alb.bit_length() - 1 << 6 | MT_Q | N16)
+            ml.append(fr | (_BL(alb) - 1) << 6 | MT_Q | N16)
 def _gen_bishop_moves(board, us, them, pinned, king_sq, check_mask, ml):
-    bishops = board.pieces[us][B]
+    pu = board.pieces[us]
+    bishops = pu[B]
     if not bishops:
         return
     tocc = board.occ[them]
@@ -382,11 +448,10 @@ def _gen_bishop_moves(board, us, them, pinned, king_sq, check_mask, ml):
     MT_CAP = _MT_CAP
     MT_Q = _MT_Q
     B16 = _B16
-    append = ml.append
     while bishops:
         lsb = bishops & -bishops
         bishops ^= lsb
-        fr = lsb.bit_length() - 1
+        fr = _BL(lsb) - 1
         attacks = BT[fr][occ & BMK[fr]] & ~nocc
         if lsb & pinned:
             attacks &= LINE[king_sq][fr]
@@ -396,14 +461,15 @@ def _gen_bishop_moves(board, us, them, pinned, king_sq, check_mask, ml):
         while caps:
             alb = caps & -caps
             caps ^= alb
-            to = alb.bit_length() - 1
-            append(fr | to << 6 | MT_CAP | B16 | pat[to] << 19)
+            to = _BL(alb) - 1
+            ml.append(fr | to << 6 | MT_CAP | B16 | pat[to] << 19)
         while quiets:
             alb = quiets & -quiets
             quiets ^= alb
-            append(fr | alb.bit_length() - 1 << 6 | MT_Q | B16)
+            ml.append(fr | (_BL(alb) - 1) << 6 | MT_Q | B16)
 def _gen_rook_moves(board, us, them, pinned, king_sq, check_mask, ml):
-    rooks = board.pieces[us][R]
+    pu = board.pieces[us]
+    rooks = pu[R]
     if not rooks:
         return
     tocc = board.occ[them]
@@ -416,11 +482,10 @@ def _gen_rook_moves(board, us, them, pinned, king_sq, check_mask, ml):
     MT_CAP = _MT_CAP
     MT_Q = _MT_Q
     R16 = _R16
-    append = ml.append
     while rooks:
         lsb = rooks & -rooks
         rooks ^= lsb
-        fr = lsb.bit_length() - 1
+        fr = _BL(lsb) - 1
         attacks = RT[fr][occ & RMK[fr]] & ~nocc
         if lsb & pinned:
             attacks &= LINE[king_sq][fr]
@@ -430,14 +495,15 @@ def _gen_rook_moves(board, us, them, pinned, king_sq, check_mask, ml):
         while caps:
             alb = caps & -caps
             caps ^= alb
-            to = alb.bit_length() - 1
-            append(fr | to << 6 | MT_CAP | R16 | pat[to] << 19)
+            to = _BL(alb) - 1
+            ml.append(fr | to << 6 | MT_CAP | R16 | pat[to] << 19)
         while quiets:
             alb = quiets & -quiets
             quiets ^= alb
-            append(fr | alb.bit_length() - 1 << 6 | MT_Q | R16)
+            ml.append(fr | (_BL(alb) - 1) << 6 | MT_Q | R16)
 def _gen_queen_moves(board, us, them, pinned, king_sq, check_mask, ml):
-    queens = board.pieces[us][Q]
+    pu = board.pieces[us]
+    queens = pu[Q]
     if not queens:
         return
     tocc = board.occ[them]
@@ -452,11 +518,10 @@ def _gen_queen_moves(board, us, them, pinned, king_sq, check_mask, ml):
     MT_CAP = _MT_CAP
     MT_Q = _MT_Q
     Q16 = _Q16
-    append = ml.append
     while queens:
         lsb = queens & -queens
         queens ^= lsb
-        fr = lsb.bit_length() - 1
+        fr = _BL(lsb) - 1
         attacks = (BT[fr][occ & BMK[fr]] | RT[fr][occ & RMK[fr]]) & ~nocc
         if lsb & pinned:
             attacks &= LINE[king_sq][fr]
@@ -466,12 +531,12 @@ def _gen_queen_moves(board, us, them, pinned, king_sq, check_mask, ml):
         while caps:
             alb = caps & -caps
             caps ^= alb
-            to = alb.bit_length() - 1
-            append(fr | to << 6 | MT_CAP | Q16 | pat[to] << 19)
+            to = _BL(alb) - 1
+            ml.append(fr | to << 6 | MT_CAP | Q16 | pat[to] << 19)
         while quiets:
             alb = quiets & -quiets
             quiets ^= alb
-            append(fr | alb.bit_length() - 1 << 6 | MT_Q | Q16)
+            ml.append(fr | (_BL(alb) - 1) << 6 | MT_Q | Q16)
 def _gen_king_moves(board, us, them, king_sq, check_mask, ml):
     tocc = board.occ[them]
     nocc = board.occ[us]
@@ -499,11 +564,10 @@ def _gen_king_moves(board, us, them, king_sq, check_mask, ml):
     orth_att = pR | pQ
     occ_nk = occ ^ BB[king_sq]
     attacks = KING[king_sq] & ~nocc
-    append = ml.append
     while attacks:
         alb = attacks & -attacks
         attacks ^= alb
-        to = alb.bit_length() - 1
+        to = _BL(alb) - 1
         if PA[defender][to] & pP:
             continue
         if KA[to] & pN:
@@ -515,9 +579,9 @@ def _gen_king_moves(board, us, them, king_sq, check_mask, ml):
         if orth_att and RT[to][occ_nk & RMK[to]] & orth_att:
             continue
         if alb & tocc:
-            append(king_sq | to << 6 | MT_CAP | _K16 | pat[to] << 19)
+            ml.append(king_sq | to << 6 | MT_CAP | _K16 | pat[to] << 19)
         else:
-            append(king_sq | to << 6 | MT_Q | _K16)
+            ml.append(king_sq | to << 6 | MT_Q | _K16)
     if check_mask != _FULL:
         return
     cr = board.castling
@@ -535,7 +599,7 @@ def _gen_king_moves(board, us, them, king_sq, check_mask, ml):
                     ok = False
                     break
             if ok:
-                append(king_sq | 6 << 6 | _MT_KC | _K16)
+                ml.append(king_sq | 6 << 6 | _MT_KC | _K16)
         if cr & 2 and (not occ & _CE_WQ):
             ok = True
             for sq in (4, 3, 2):
@@ -549,7 +613,7 @@ def _gen_king_moves(board, us, them, king_sq, check_mask, ml):
                     ok = False
                     break
             if ok:
-                append(king_sq | 2 << 6 | _MT_QC | _K16)
+                ml.append(king_sq | 2 << 6 | _MT_QC | _K16)
     else:
         if cr & 4 and (not occ & _CE_BK):
             ok = True
@@ -564,7 +628,7 @@ def _gen_king_moves(board, us, them, king_sq, check_mask, ml):
                     ok = False
                     break
             if ok:
-                append(king_sq | 62 << 6 | _MT_KC | _K16)
+                ml.append(king_sq | 62 << 6 | _MT_KC | _K16)
         if cr & 8 and (not occ & _CE_BQ):
             ok = True
             for sq in (60, 59, 58):
@@ -578,7 +642,7 @@ def _gen_king_moves(board, us, them, king_sq, check_mask, ml):
                     ok = False
                     break
             if ok:
-                append(king_sq | 58 << 6 | _MT_QC | _K16)
+                ml.append(king_sq | 58 << 6 | _MT_QC | _K16)
 def _gen_king_captures(board, us, them, king_sq, ml):
     tocc = board.occ[them]
     occ = board.all_occ
@@ -603,11 +667,10 @@ def _gen_king_captures(board, us, them, king_sq, ml):
     orth_att = pR | pQ
     occ_nk = occ ^ BB[king_sq]
     attacks = KING[king_sq] & tocc
-    append = ml.append
     while attacks:
         alb = attacks & -attacks
         attacks ^= alb
-        to = alb.bit_length() - 1
+        to = _BL(alb) - 1
         if PA[defender][to] & pP:
             continue
         if KA[to] & pN:
@@ -618,7 +681,7 @@ def _gen_king_captures(board, us, them, king_sq, ml):
             continue
         if orth_att and RT[to][occ_nk & RMK[to]] & orth_att:
             continue
-        append(king_sq | to << 6 | _MT_CAP | _K16 | pat[to] << 19)
+        ml.append(king_sq | to << 6 | _MT_CAP | _K16 | pat[to] << 19)
 def _gen_pawn_captures(board, us, them, pinned, king_sq, check_mask, ml):
     pawns = board.pieces[us][P]
     if not pawns:
@@ -639,7 +702,6 @@ def _gen_pawn_captures(board, us, them, pinned, king_sq, check_mask, ml):
     BKPC = _BKPC
     RKPC = _RKPC
     QKPC = _QKPC
-    append = ml.append
     if us == WHITE:
         single = pawns << 8 & ~occ & _FULL
         cl = pawns << 7 & NFH & tocc
@@ -666,49 +728,49 @@ def _gen_pawn_captures(board, us, them, pinned, king_sq, check_mask, ml):
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - fwd
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
         base = fr | to << 6 | _P16
-        append(base | NKP)
-        append(base | BKP)
-        append(base | RKP)
-        append(base | QKP)
+        ml.append(base | NKP)
+        ml.append(base | BKP)
+        ml.append(base | RKP)
+        ml.append(base | QKP)
     bb = cl & check_mask
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - cl_off
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
         cap_pc = pat[to]
         if lsb & promo:
             base = fr | to << 6 | _P16 | cap_pc << 19
-            append(base | NKPC)
-            append(base | BKPC)
-            append(base | RKPC)
-            append(base | QKPC)
+            ml.append(base | NKPC)
+            ml.append(base | BKPC)
+            ml.append(base | RKPC)
+            ml.append(base | QKPC)
         else:
-            append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
+            ml.append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
     bb = cr & check_mask
     while bb:
         lsb = bb & -bb
         bb ^= lsb
-        to = lsb.bit_length() - 1
+        to = _BL(lsb) - 1
         fr = to - cr_off
         if BB[fr] & pinned and (not LINE[king_sq][fr] >> to & 1):
             continue
         cap_pc = pat[to]
         if lsb & promo:
             base = fr | to << 6 | _P16 | cap_pc << 19
-            append(base | NKPC)
-            append(base | BKPC)
-            append(base | RKPC)
-            append(base | QKPC)
+            ml.append(base | NKPC)
+            ml.append(base | BKPC)
+            ml.append(base | RKPC)
+            ml.append(base | QKPC)
         else:
-            append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
+            ml.append(fr | to << 6 | _MT_CAP | _P16 | cap_pc << 19)
     if el or er:
         p_them = board.pieces[them]
         pB_t = p_them[B]
@@ -723,7 +785,7 @@ def _gen_pawn_captures(board, us, them, pinned, king_sq, check_mask, ml):
             while bb2:
                 lsb = bb2 & -bb2
                 bb2 ^= lsb
-                to = lsb.bit_length() - 1
+                to = _BL(lsb) - 1
                 fr = to - off
                 cap_sq = to - fwd
                 occ2 = occ ^ BB2[fr] ^ BB2[cap_sq] | BB2[to]
@@ -733,7 +795,7 @@ def _gen_pawn_captures(board, us, them, pinned, king_sq, check_mask, ml):
                 orth2 = pR_t | pQ_t
                 if orth2 and RT[king_sq][occ2 & RMK[king_sq]] & orth2:
                     continue
-                append(fr | to << 6 | _MT_EP | _P16)
+                ml.append(fr | to << 6 | _MT_EP | _P16)
 def generate_legal_moves(board):
     us = board.turn
     them = us ^ 1
@@ -749,7 +811,7 @@ def generate_legal_moves(board):
         _gen_king_moves(board, us, them, king_sq, _FULL, ml)
         return ml
     else:
-        checker_sq = checkers.bit_length() - 1
+        checker_sq = _BL(checkers) - 1
         check_mask = checkers | _BET[king_sq][checker_sq]
     _gen_king_moves(board, us, them, king_sq, check_mask, ml)
     _gen_pawn_moves(board, us, them, pinned, king_sq, check_mask, ml)
@@ -772,9 +834,9 @@ def generate_legal_moves_ex(board):
         check_mask = _FULL
     elif checkers & checkers - 1:
         _gen_king_moves(board, us, them, king_sq, _FULL, ml)
-        return (ml, checkers, True)
+        return (ml, checkers, pinned, True)
     else:
-        checker_sq = checkers.bit_length() - 1
+        checker_sq = _BL(checkers) - 1
         check_mask = checkers | _BET[king_sq][checker_sq]
     _gen_king_moves(board, us, them, king_sq, check_mask, ml)
     _gen_pawn_moves(board, us, them, pinned, king_sq, check_mask, ml)
@@ -782,7 +844,7 @@ def generate_legal_moves_ex(board):
     _gen_bishop_moves(board, us, them, pinned, king_sq, check_mask, ml)
     _gen_rook_moves(board, us, them, pinned, king_sq, check_mask, ml)
     _gen_queen_moves(board, us, them, pinned, king_sq, check_mask, ml)
-    return (ml, checkers, in_check)
+    return (ml, checkers, pinned, in_check)
 def generate_captures(board):
     us = board.turn
     them = us ^ 1
@@ -798,7 +860,7 @@ def generate_captures(board):
         _gen_king_captures(board, us, them, king_sq, ml)
         return ml
     else:
-        checker_sq = checkers.bit_length() - 1
+        checker_sq = _BL(checkers) - 1
         check_mask = checkers | _BET[king_sq][checker_sq]
     cap_mask = check_mask & board.occ[them]
     _gen_king_captures(board, us, them, king_sq, ml)
@@ -822,7 +884,7 @@ def generate_captures_from_info(board, checkers, pinned):
         _gen_king_captures(board, us, them, king_sq, ml)
         return ml
     else:
-        checker_sq = checkers.bit_length() - 1
+        checker_sq = _BL(checkers) - 1
         check_mask = checkers | _BET[king_sq][checker_sq]
     cap_mask = check_mask & board.occ[them]
     _gen_king_captures(board, us, them, king_sq, ml)
