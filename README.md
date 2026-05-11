@@ -34,7 +34,7 @@ A robust **Negamax with Alpha-Beta Pruning** framework including:
 
 ## Usage
 PureChess is a command-line engine. To integrate it:
-1. Load `main.py` (or the compiled `.exe`) into any UCI-compatible GUI.
+1. Load the compiled .exe into any UCI-compatible GUI.
 2. The engine supports standard time control commands (`wtime`, `btime`, `movetime`, `depth`).
 
 ## License
