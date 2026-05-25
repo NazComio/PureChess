@@ -22,4 +22,5 @@ A high-performance, UCI-compatible chess engine written in pure Python, featurin
 4. **Self-Contained:** Runs on any standard Python 3.10+ environment.
 
 ## License
-BSD 3-Clause "New" or "Revised" License.
+GNU Affero General Public License v3.0.
+"Note: Previous versions (1.0–1.1) were released under the BSD 3-Clause License. All versions from 1.2 onwards are licensed under the AGPLv3 to ensure the project remains open and accessible to the community. This is the official source."
