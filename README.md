@@ -16,7 +16,7 @@ A high-performance, UCI-compatible chess engine written in pure Python, featurin
 * **UCI Support:** Fully compatible with standard GUIs (Arena, Cute Chess, Lichess).
 
 ## Key Features
-1. **NNUE Integration:** Uses numpy for fast forward-pass inference.
+1. **NNUE Integration:** Uses efficient, dependency‑free NNUE inference with Python's built‑in array module and precomputed delta updates for incremental feature calculation.
 2. **Advanced Move Ordering:** Continuation history, capture history, and SEE (Static Exchange Evaluation).
 3. **Optimized Search:** Singular extensions for high-depth stability.
 4. **Self-Contained:** Runs on any standard Python 3.10+ environment.
