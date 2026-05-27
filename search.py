@@ -60,60 +60,84 @@ for _sd in range(64):
         if _mi >= LMR_MIN_M and _sd >= LMR_MIN_D:
             _LMR_TABLE[_sd][_mi] = max(1, int((_sd ** 0.5 + (_mi - LMR_MIN_M) ** 0.5) * 0.45 + 0.5))
 del _sd, _mi
-import numpy as _np
 _H = _NNUE_N_HIDDEN
-_NP_IB = _np.array(_NNUE_IB, dtype=_np.float32)
-_NP_OW = _np.array(_NNUE_OW, dtype=_np.float32)
-_NP_FW = _np.array([list(col) for col in _NNUE_FW], dtype=_np.float32)
-_NP_QD: dict = {}
-_fw = _NP_FW
+_AF = _array.array('f', [0.0] * (768 * _H))
+for _fi, _col in enumerate(_NNUE_FW):
+    _base_fi = _fi * _H
+    for _hi, _v in enumerate(_col):
+        _AF[_base_fi + _hi] = _v
+_IB_ARR = _array.array('f', _NNUE_IB)
+_OW_SC = _array.array('f', (w * _NNUE_SCALE for w in _NNUE_OW))
+_OB_SC = float(_NNUE_OB * _NNUE_SCALE)
+_QD: dict = {}
 for _color in range(2):
     for _pc in range(6):
-        _base = _color * 384 + _pc * 64
+        _base_c = _color * 384 + _pc * 64
         for _fr in range(64):
-            _ff  = _base + _fr
-            _ffw = _fw[_ff]
+            _ff = _base_c + _fr
+            _ff_base = _ff * _H
             for _to in range(64):
                 if _fr == _to:
                     continue
-                _tf = _base + _to
-                _NP_QD[_ff * 768 + _tf] = (_fw[_tf] - _ffw).copy()
-del _color, _pc, _base, _fr, _ff, _ffw, _to, _tf, _fw
-def _full_score(board):
-    acc = _NP_IB.copy()
-    FW  = _NP_FW
+                _tf = _base_c + _to
+                _tf_base = _tf * _H
+                _d = _array.array('f', (
+                    _AF[_tf_base + _i] - _AF[_ff_base + _i]
+                    for _i in range(_H)
+                ))
+                _QD[_ff * 768 + _tf] = _d
+del _color, _pc, _base_c, _fr, _ff, _ff_base, _to, _tf, _tf_base, _d, _fi, _col, _base_fi, _hi, _v
+_SNAP_POOL = [_array.array('f', [0.0] * _H) for _ in range(MAX_DEPTH + 10)]
+def _acc_add(acc: _array.array, feat: int) -> None:
+    base = feat * _H
+    af   = _AF
+    for i in range(_H):
+        acc[i] += af[base + i]
+def _acc_sub(acc: _array.array, feat: int) -> None:
+    base = feat * _H
+    af   = _AF
+    for i in range(_H):
+        acc[i] -= af[base + i]
+def _acc_add_delta(acc: _array.array, key: int) -> None:
+    d = _QD[key]
+    for i in range(_H):
+        acc[i] += d[i]
+def _full_score(board) -> _array.array:
+    acc = _array.array('f', _IB_ARR)
     pcs = board.pieces
+    af  = _AF
+    h   = _H
     for color in (WHITE, BLACK):
         base = color * 384
         for pc in range(6):
             base_pc = base + pc * 64
             bb = pcs[color][pc]
             while bb:
-                acc += FW[base_pc + (bb & -bb).bit_length() - 1]
-                bb  &= bb - 1
+                feat = base_pc + (bb & -bb).bit_length() - 1
+                fb   = feat * h
+                for i in range(h):
+                    acc[i] += af[fb + i]
+                bb &= bb - 1
     return acc
-_NP_OW_SC  = (_NP_OW * _NNUE_SCALE).astype(_np.float32)
-_NP_OB_SC  = float(_NNUE_OB * _NNUE_SCALE)
-_NP_H_BUF  = _np.empty(_H, dtype=_np.float32)
-_np_maximum = _np.maximum
-_np_minimum = _np.minimum
-_np_dot     = _np.dot
-_np_copyto  = _np.copyto
-def _nnue_output(acc) -> int:
-    _np_maximum(acc, 0.0, out=_NP_H_BUF)
-    _np_minimum(_NP_H_BUF, 1.0, out=_NP_H_BUF)
-    return int(_np_dot(_NP_H_BUF, _NP_OW_SC) + _NP_OB_SC)
-def _fast_eval(acc, turn) -> int:
+def _nnue_output(acc: _array.array) -> int:
+    ow  = _OW_SC
+    out = _OB_SC
+    for i in range(_H):
+        v = acc[i]
+        if   v < 0.0: v = 0.0
+        elif v > 1.0: v = 1.0
+        out += v * ow[i]
+    return int(out)
+def _fast_eval(acc: _array.array, turn) -> int:
     cp = _nnue_output(acc)
     return cp if turn == WHITE else -cp
-_NP_SNAP_POOL = [_np.empty(_H, dtype=_np.float32) for _ in range(MAX_DEPTH + 10)]
-def _acc_push(acc, stack) -> None:
-    buf = _NP_SNAP_POOL[len(stack)]
-    _np_copyto(buf, acc)
+def _acc_push(acc: _array.array, stack: list) -> None:
+    buf = _SNAP_POOL[len(stack)]
+    buf[:] = acc
     stack.append(buf)
-def _acc_pop(acc, stack) -> None:
-    _np_copyto(acc, stack.pop())
-def _score_delta(board, move, acc, acc_stack) -> None:
+def _acc_pop(acc: _array.array, stack: list) -> None:
+    acc[:] = stack.pop()
+def _score_delta(board, move: int, acc: _array.array, acc_stack: list) -> None:
     _acc_push(acc, acc_stack)
     us   = board.turn
     them = us ^ 1
@@ -123,39 +147,38 @@ def _score_delta(board, move, acc, acc_stack) -> None:
     mt   = move >> 12 & 15
     us6  = us   * 384
     th6  = them * 384
-    FW   = _NP_FW
-    QD   = _NP_QD
+    QD   = _QD
     if mt >= 8:
         pp = promo_piece(move)
-        acc += FW[us6 + pp * 64 + to]
-        acc -= FW[us6 + P  * 64 + fr]
+        _acc_add(acc, us6 + pp * 64 + to)
+        _acc_sub(acc, us6 + P  * 64 + fr)
         if mt >= 12:
             cap = move >> 19 & 7
             if cap <= 5:
-                acc -= FW[th6 + cap * 64 + to]
+                _acc_sub(acc, th6 + cap * 64 + to)
     elif mt == 5:
         cap_sq = board.ep_sq + (-8 if us == WHITE else 8)
         ff = us6 + P * 64 + fr
         tf = us6 + P * 64 + to
-        acc += QD[ff * 768 + tf]
-        acc -= FW[th6 + P * 64 + cap_sq]
+        _acc_add_delta(acc, ff * 768 + tf)
+        _acc_sub(acc, th6 + P * 64 + cap_sq)
     elif mt == 2 or mt == 3:
         flag = (CASTLE_WK if us == WHITE else CASTLE_BK) if mt == 2 \
                else (CASTLE_WQ if us == WHITE else CASTLE_BQ)
         rf = CASTLE_ROOK_FROM[flag]; rt = CASTLE_ROOK_TO[flag]
-        fk = us6 + K * 64 + fr;  tk = us6 + K * 64 + to
-        fr_ = us6 + R * 64 + rf; tr_ = us6 + R * 64 + rt
-        acc += QD[fk * 768 + tk]
-        acc += QD[fr_ * 768 + tr_]
+        fk  = us6 + K * 64 + fr;  tk  = us6 + K * 64 + to
+        fr_ = us6 + R * 64 + rf;  tr_ = us6 + R * 64 + rt
+        _acc_add_delta(acc, fk  * 768 + tk)
+        _acc_add_delta(acc, fr_ * 768 + tr_)
     elif move & FLAG_CAPTURE:
         cap = move >> 19 & 7
         ff = us6 + pc * 64 + fr; tf = us6 + pc * 64 + to
-        acc += QD[ff * 768 + tf]
+        _acc_add_delta(acc, ff * 768 + tf)
         if cap <= 5:
-            acc -= FW[th6 + cap * 64 + to]
+            _acc_sub(acc, th6 + cap * 64 + to)
     else:
         ff = us6 + pc * 64 + fr; tf = us6 + pc * 64 + to
-        acc += QD[ff * 768 + tf]
+        _acc_add_delta(acc, ff * 768 + tf)
 def _nnue_eval_from_stack(score_stack, turn):
     cp = _nnue_output(score_stack[-1])
     return cp if turn == WHITE else -cp
@@ -438,7 +461,7 @@ class Searcher:
         self._cont_hist = _make_cont_hist()
         self._cap_hist = [[[0] * 6 for _ in range(6)] for _ in range(2)]
         self._counter_moves = [[0] * 64 for _ in range(64)]
-        self._acc = _NP_IB.copy()
+        self._acc = _array.array('f', _IB_ARR)
         self._acc_stack = []
         self._rep_counts = {}
         self._best_move_changes = 0
