@@ -1,4 +1,4 @@
-import time, random
+import time, random, operator
 from moves import generate_legal_moves, generate_legal_moves_ex, generate_captures, generate_captures_from_info, get_attack_info, _BISHOP_TABLE, _BISHOP_MASKS, _ROOK_TABLE, _ROOK_MASKS
 from move_encoding import FLAG_PROMO, FLAG_CAPTURE, promo_piece
 from nnue_eval import _IB as _NNUE_IB, _OW as _NNUE_OW, _OB as _NNUE_OB, _SCALE as _NNUE_SCALE, _FW as _NNUE_FW, _N_HIDDEN as _NNUE_N_HIDDEN
@@ -61,52 +61,32 @@ for _sd in range(64):
             _LMR_TABLE[_sd][_mi] = max(1, int((_sd ** 0.5 + (_mi - LMR_MIN_M) ** 0.5) * 0.45 + 0.5))
 del _sd, _mi
 _H = _NNUE_N_HIDDEN
-_AF = _array.array('f', [0.0] * (768 * _H))
-for _fi, _col in enumerate(_NNUE_FW):
-    _base_fi = _fi * _H
-    for _hi, _v in enumerate(_col):
-        _AF[_base_fi + _hi] = _v
-_IB_ARR = _array.array('f', _NNUE_IB)
-_OW_SC = _array.array('f', (w * _NNUE_SCALE for w in _NNUE_OW))
-_OB_SC = float(_NNUE_OB * _NNUE_SCALE)
+_OB_SC: float = float(_NNUE_OB * _NNUE_SCALE)
+_AFL: list = [list(_NNUE_FW[feat]) for feat in range(768)]
+_OW_SC_L: list = [w * _NNUE_SCALE for w in _NNUE_OW]
+_IB_L: list = list(_NNUE_IB)
 _QD: dict = {}
+_op_sub = operator.sub
+_op_add = operator.add
 for _color in range(2):
     for _pc in range(6):
         _base_c = _color * 384 + _pc * 64
         for _fr in range(64):
             _ff = _base_c + _fr
-            _ff_base = _ff * _H
+            _col_ff = _AFL[_ff]
             for _to in range(64):
                 if _fr == _to:
                     continue
                 _tf = _base_c + _to
-                _tf_base = _tf * _H
-                _d = _array.array('f', (
-                    _AF[_tf_base + _i] - _AF[_ff_base + _i]
-                    for _i in range(_H)
-                ))
-                _QD[_ff * 768 + _tf] = _d
-del _color, _pc, _base_c, _fr, _ff, _ff_base, _to, _tf, _tf_base, _d, _fi, _col, _base_fi, _hi, _v
-_SNAP_POOL = [_array.array('f', [0.0] * _H) for _ in range(MAX_DEPTH + 10)]
-def _acc_add(acc: _array.array, feat: int) -> None:
-    base = feat * _H
-    af   = _AF
-    for i in range(_H):
-        acc[i] += af[base + i]
-def _acc_sub(acc: _array.array, feat: int) -> None:
-    base = feat * _H
-    af   = _AF
-    for i in range(_H):
-        acc[i] -= af[base + i]
-def _acc_add_delta(acc: _array.array, key: int) -> None:
-    d = _QD[key]
-    for i in range(_H):
-        acc[i] += d[i]
-def _full_score(board) -> _array.array:
-    acc = _array.array('f', _IB_ARR)
+                _QD[_ff * 768 + _tf] = list(map(_op_sub, _AFL[_tf], _col_ff))
+del _color, _pc, _base_c, _fr, _ff, _col_ff, _to, _tf
+_OP_ADD = operator.add
+_OP_SUB = operator.sub
+def _full_score(board) -> list:
+    acc = list(_IB_L)
     pcs = board.pieces
-    af  = _AF
-    h   = _H
+    AFL = _AFL
+    _add = _OP_ADD
     for color in (WHITE, BLACK):
         base = color * 384
         for pc in range(6):
@@ -114,31 +94,18 @@ def _full_score(board) -> _array.array:
             bb = pcs[color][pc]
             while bb:
                 feat = base_pc + (bb & -bb).bit_length() - 1
-                fb   = feat * h
-                for i in range(h):
-                    acc[i] += af[fb + i]
+                acc = list(map(_add, acc, AFL[feat]))
                 bb &= bb - 1
     return acc
-def _nnue_output(acc: _array.array) -> int:
-    ow  = _OW_SC
-    out = _OB_SC
-    for i in range(_H):
-        v = acc[i]
-        if   v < 0.0: v = 0.0
-        elif v > 1.0: v = 1.0
-        out += v * ow[i]
-    return int(out)
-def _fast_eval(acc: _array.array, turn) -> int:
+def _nnue_output(acc: list) -> int:
+    ow = _OW_SC_L
+    return int(_OB_SC + sum(v * w if 0.0 <= v <= 1.0 else (w if v > 1.0 else 0.0)
+                            for v, w in zip(acc, ow)))
+def _fast_eval(acc: list, turn) -> int:
     cp = _nnue_output(acc)
     return cp if turn == WHITE else -cp
-def _acc_push(acc: _array.array, stack: list) -> None:
-    buf = _SNAP_POOL[len(stack)]
-    buf[:] = acc
-    stack.append(buf)
-def _acc_pop(acc: _array.array, stack: list) -> None:
-    acc[:] = stack.pop()
-def _score_delta(board, move: int, acc: _array.array, acc_stack: list) -> None:
-    _acc_push(acc, acc_stack)
+def _score_delta(board, move: int, acc: list, acc_stack: list):
+    acc_stack.append(acc[:])
     us   = board.turn
     them = us ^ 1
     fr   = move & 63
@@ -148,37 +115,51 @@ def _score_delta(board, move: int, acc: _array.array, acc_stack: list) -> None:
     us6  = us   * 384
     th6  = them * 384
     QD   = _QD
+    AFL  = _AFL
+    _add = _OP_ADD
+    _sub = _OP_SUB
     if mt >= 8:
         pp = promo_piece(move)
-        _acc_add(acc, us6 + pp * 64 + to)
-        _acc_sub(acc, us6 + P  * 64 + fr)
+        acc = list(map(_add, acc, AFL[us6 + pp * 64 + to]))
+        acc = list(map(_sub, acc, AFL[us6 + P  * 64 + fr]))
         if mt >= 12:
             cap = move >> 19 & 7
             if cap <= 5:
-                _acc_sub(acc, th6 + cap * 64 + to)
+                cap_col = AFL[th6 + cap * 64 + to]
+                acc = [a - c for a, c in zip(acc, cap_col)]
     elif mt == 5:
         cap_sq = board.ep_sq + (-8 if us == WHITE else 8)
         ff = us6 + P * 64 + fr
         tf = us6 + P * 64 + to
-        _acc_add_delta(acc, ff * 768 + tf)
-        _acc_sub(acc, th6 + P * 64 + cap_sq)
+        acc = list(map(_add, acc, QD[ff * 768 + tf]))
+        cap_col = AFL[th6 + P * 64 + cap_sq]
+        acc = [a - c for a, c in zip(acc, cap_col)]
     elif mt == 2 or mt == 3:
         flag = (CASTLE_WK if us == WHITE else CASTLE_BK) if mt == 2 \
                else (CASTLE_WQ if us == WHITE else CASTLE_BQ)
         rf = CASTLE_ROOK_FROM[flag]; rt = CASTLE_ROOK_TO[flag]
         fk  = us6 + K * 64 + fr;  tk  = us6 + K * 64 + to
         fr_ = us6 + R * 64 + rf;  tr_ = us6 + R * 64 + rt
-        _acc_add_delta(acc, fk  * 768 + tk)
-        _acc_add_delta(acc, fr_ * 768 + tr_)
+        acc = list(map(_add, acc, QD[fk  * 768 + tk]))
+        acc = list(map(_add, acc, QD[fr_ * 768 + tr_]))
     elif move & FLAG_CAPTURE:
         cap = move >> 19 & 7
-        ff = us6 + pc * 64 + fr; tf = us6 + pc * 64 + to
-        _acc_add_delta(acc, ff * 768 + tf)
+        ff = us6 + pc * 64 + fr
+        tf = us6 + pc * 64 + to
+        move_d = QD[ff * 768 + tf]
         if cap <= 5:
-            _acc_sub(acc, th6 + cap * 64 + to)
+            cap_col = AFL[th6 + cap * 64 + to]
+            acc = [a + b - c for a, b, c in zip(acc, move_d, cap_col)]
+        else:
+            acc = list(map(_add, acc, move_d))
     else:
-        ff = us6 + pc * 64 + fr; tf = us6 + pc * 64 + to
-        _acc_add_delta(acc, ff * 768 + tf)
+        ff = us6 + pc * 64 + fr
+        tf = us6 + pc * 64 + to
+        acc = list(map(_add, acc, QD[ff * 768 + tf]))
+    ow = _OW_SC_L
+    raw_cp = int(_OB_SC + sum(v * w if 0.0 <= v <= 1.0 else (w if v > 1.0 else 0.0)
+                              for v, w in zip(acc, ow)))
+    return acc, raw_cp
 def _nnue_eval_from_stack(score_stack, turn):
     cp = _nnue_output(score_stack[-1])
     return cp if turn == WHITE else -cp
@@ -461,14 +442,10 @@ class Searcher:
         self._cont_hist = _make_cont_hist()
         self._cap_hist = [[[0] * 6 for _ in range(6)] for _ in range(2)]
         self._counter_moves = [[0] * 64 for _ in range(64)]
-        self._acc = _array.array('f', _IB_ARR)
+        self._acc = list(_IB_L)
         self._acc_stack = []
         self._rep_counts = {}
         self._best_move_changes = 0
-    def _check_time(self):
-        if not self._stop and self.nodes & 1023 == 0:
-            if time.time() >= self._end_time:
-                self._stop = True
     def _build_history_counts(self, board):
         self._rep_counts.clear()
         if not board._undo:
@@ -484,7 +461,8 @@ class Searcher:
             board.make_move(move)
             h = _full_hash(board)
             self._rep_counts[h] = self._rep_counts.get(h, 0) + 1
-    def _quiesce(self, board, alpha: int, beta: int, h: int, checkers: int=-1, pinned: int=-1) -> int:
+    def _quiesce(self, board, alpha: int, beta: int, h: int,
+                 checkers: int=-1, pinned: int=-1, inherited_cp: int=None) -> int:
         self.nodes += 1
         if self.nodes & 1023 == 0 and not self._stop:
             if time.time() >= self._end_time:
@@ -497,7 +475,13 @@ class Searcher:
         if board.phase_total == 0 and _is_material_draw(board):
             return 0
         _, tt_move = _tt_probe(h, 0, alpha, beta)
-        sp = _fast_eval(self._acc, board.turn)
+        acc = self._acc
+        if inherited_cp is not None:
+            raw_cp = inherited_cp
+        else:
+            raw_cp = _nnue_output(acc)
+        turn = board.turn
+        sp = raw_cp if turn == WHITE else -raw_cp
         hm = board.halfmove
         if hm >= 100:
             return 0
@@ -550,8 +534,8 @@ class Searcher:
                 if see(board, m) < 0:
                     return alpha
         SV = _SEE_VAL
-        acc = self._acc; acc_stack = self._acc_stack
-        _sd = _score_delta; _ap = _acc_pop; _dh = _delta_hash
+        acc_stack = self._acc_stack
+        _dh = _delta_hash
         _mm = board.make_move; _um = board.unmake_move
         for move in captures:
             if not in_check and move & FLAG_CAPTURE and (not move & FLAG_PROMO):
@@ -560,11 +544,13 @@ class Searcher:
                     continue
             new_h = _dh(board, move, h)
             rep[new_h] = rep.get(new_h, 0) + 1
-            _sd(board, move, acc, acc_stack)
+            acc, child_cp = _score_delta(board, move, acc, acc_stack)
+            self._acc = acc
             _mm(move)
-            score = -self._quiesce(board, -beta, -alpha, new_h)
+            score = -self._quiesce(board, -beta, -alpha, new_h, inherited_cp=child_cp)
             _um(move)
-            _ap(acc, acc_stack)
+            acc = acc_stack.pop()
+            self._acc = acc
             cnt = rep[new_h] - 1
             if cnt <= 0: del rep[new_h]
             else:        rep[new_h] = cnt
@@ -580,7 +566,9 @@ class Searcher:
             if score > alpha:
                 alpha = score
         return alpha
-    def _negamax(self, board, depth: int, alpha: int, beta: int, ply: int, h: int, null_ok: bool, prev_fr: int=-1, prev_pc: int=-1, prev_to: int=0, is_singular: bool=False) -> int:
+    def _negamax(self, board, depth: int, alpha: int, beta: int, ply: int, h: int,
+                 null_ok: bool, prev_fr: int=-1, prev_pc: int=-1, prev_to: int=0,
+                 is_singular: bool=False, inherited_cp: int=None) -> int:
         self.nodes += 1
         if self.nodes & 1023 == 0 and not self._stop:
             if time.time() >= self._end_time:
@@ -602,7 +590,7 @@ class Searcher:
         if tt_score is not None and (not is_singular):
             return tt_score
         if depth <= 0:
-            score = self._quiesce(board, alpha, beta, h)
+            score = self._quiesce(board, alpha, beta, h, inherited_cp=inherited_cp)
             if not (board.pieces[WHITE][P] | board.pieces[BLACK][P] |
                     board.pieces[WHITE][R] | board.pieces[BLACK][R] |
                     board.pieces[WHITE][Q] | board.pieces[BLACK][Q]):
@@ -615,12 +603,21 @@ class Searcher:
         hm = board.halfmove
         if hm >= 100 and not in_check:
             return 0
-        static_eval = _fast_eval(self._acc, us) if not in_check else 0
+        acc = self._acc
+        if not in_check:
+            if inherited_cp is not None:
+                raw_cp = inherited_cp
+            else:
+                raw_cp = _nnue_output(acc)
+            static_eval = raw_cp if us == WHITE else -raw_cp
+        else:
+            static_eval = 0
+            raw_cp = None
         if not in_check and depth <= RAZOR_DEPTH and (abs(alpha) < MATE_SCORE - 100):
             se = static_eval
             if hm >= 80: se = se * (100 - hm) // 20
             if se + RAZOR_MARGIN[depth] < alpha:
-                qsc = self._quiesce(board, alpha, beta, h)
+                qsc = self._quiesce(board, alpha, beta, h, inherited_cp=raw_cp)
                 if qsc < alpha:
                     return qsc
         if not in_check and depth <= RFP_MAX_D and (abs(beta) < MATE_SCORE - 100):
@@ -632,19 +629,23 @@ class Searcher:
             se = static_eval
             pc_beta = beta + PROBCUT_BETA
             see_threshold = pc_beta - se
-            acc = self._acc; acc_stack = self._acc_stack
+            acc_stack = self._acc_stack
             for pc_move in raw_moves:
                 if not pc_move & FLAG_CAPTURE: continue
                 if pc_move & FLAG_PROMO: continue
                 if see(board, pc_move) < see_threshold: continue
                 new_h = _delta_hash(board, pc_move, h)
                 rep[new_h] = rep.get(new_h, 0) + 1
-                _score_delta(board, pc_move, acc, acc_stack)
+                acc, child_cp = _score_delta(board, pc_move, acc, acc_stack)
+                self._acc = acc
                 board.make_move(pc_move)
                 pc_pc = pc_move >> 16 & 7; pc_to = pc_move >> 6 & 63
-                pc_sc = -self._negamax(board, depth - 4, -pc_beta, -pc_beta + 1, ply + 1, new_h, False, pc_move & 63, pc_pc, pc_to)
+                pc_sc = -self._negamax(board, depth - 4, -pc_beta, -pc_beta + 1, ply + 1,
+                                       new_h, False, pc_move & 63, pc_pc, pc_to,
+                                       inherited_cp=child_cp)
                 board.unmake_move(pc_move)
-                _acc_pop(acc, acc_stack)
+                acc = acc_stack.pop()
+                self._acc = acc
                 cnt = rep[new_h] - 1
                 if cnt <= 0: del rep[new_h]
                 else:        rep[new_h] = cnt
@@ -662,10 +663,12 @@ class Searcher:
                 board.ep_sq = -1
                 nh = h ^ _ZT ^ _ZE[old_ep if old_ep != -1 else 64] ^ _ZE[64]
                 rep[nh] = rep.get(nh, 0) + 1
-                acc = self._acc; acc_stack = self._acc_stack
-                _acc_push(acc, acc_stack)
-                sc = -self._negamax(board, depth - 1 - nmp_red, -beta, -beta + 1, ply + 1, nh, False)
-                _acc_pop(acc, acc_stack)
+                acc_stack = self._acc_stack
+                acc_stack.append(acc[:])
+                null_inherited = -raw_cp if raw_cp is not None else None
+                sc = -self._negamax(board, depth - 1 - nmp_red, -beta, -beta + 1,
+                                    ply + 1, nh, False, inherited_cp=null_inherited)
+                acc_stack.pop()
                 board.turn ^= 1; board.ep_sq = old_ep
                 cnt = rep[nh] - 1
                 if cnt <= 0: del rep[nh]
@@ -696,8 +699,8 @@ class Searcher:
         fut_threshold = (static_eval + FP_MARGIN[eff_depth]) if do_futility else 0
         lmp_limit = LMP_BASE + eff_depth * eff_depth if not in_check and eff_depth < LMP_MAX_D else 9999
         quiet_count = 0
-        acc = self._acc; acc_stack = self._acc_stack
-        _sd = _score_delta; _ap = _acc_pop; _dh = _delta_hash
+        acc_stack = self._acc_stack
+        _dh = _delta_hash
         _mm = board.make_move; _um = board.unmake_move
         lmr = _LMR_TABLE
         for i, move in enumerate(moves):
@@ -717,14 +720,17 @@ class Searcher:
             if eff_depth >= SE_MIN_D and move == tt_move and not is_singular and tt_move != 0 and abs(tt_score if tt_score is not None else 0) < MATE_SCORE - 100:
                 se_beta = max(alpha, (tt_score if tt_score is not None else static_eval) - SE_MARGIN)
                 se_depth = eff_depth - 3 | 1
-                se_score = self._negamax(board, se_depth, se_beta - 1, se_beta, ply, h, False, prev_fr, prev_pc, prev_to, is_singular=True)
+                se_score = self._negamax(board, se_depth, se_beta - 1, se_beta, ply, h, False,
+                                         prev_fr, prev_pc, prev_to, is_singular=True,
+                                         inherited_cp=raw_cp)
                 if self._stop: return 0
                 if se_score < se_beta: extension = 1
             elif prev_to >= 0 and is_cap and to == prev_to:
                 extension = 1
             new_h = _dh(board, move, h)
             rep[new_h] = rep.get(new_h, 0) + 1
-            _sd(board, move, acc, acc_stack)
+            acc, child_cp = _score_delta(board, move, acc, acc_stack)
+            self._acc = acc
             _mm(move)
             if not extension and eff_depth <= 4:
                 new_us = board.turn
@@ -749,28 +755,33 @@ class Searcher:
                     enemy_heavy = board.pieces[us ^ 1][R] | board.pieces[us ^ 1][Q]
                     if _BISHOP_TABLE[to][board.all_occ & _BISHOP_MASKS[to]] & enemy_heavy: red = max(1, red - 1)
                 red = min(red, search_depth - 1)
-                score = -self._negamax(board, search_depth - red, -alpha - 1, -alpha, ply + 1, new_h, True, fr, pc, to)
+                score = -self._negamax(board, search_depth - red, -alpha - 1, -alpha, ply + 1,
+                                       new_h, True, fr, pc, to, inherited_cp=child_cp)
                 if self._stop:
-                    _um(move); _ap(acc, acc_stack)
+                    _um(move); acc = acc_stack.pop(); self._acc = acc
                     cnt = rep[new_h] - 1
                     if cnt <= 0: del rep[new_h]
                     else:        rep[new_h] = cnt
                     return 0
                 if score > alpha:
-                    score = -self._negamax(board, search_depth, -beta, -alpha, ply + 1, new_h, True, fr, pc, to)
+                    score = -self._negamax(board, search_depth, -beta, -alpha, ply + 1,
+                                           new_h, True, fr, pc, to, inherited_cp=child_cp)
             elif i > 0:
-                score = -self._negamax(board, search_depth, -alpha - 1, -alpha, ply + 1, new_h, True, fr, pc, to)
+                score = -self._negamax(board, search_depth, -alpha - 1, -alpha, ply + 1,
+                                       new_h, True, fr, pc, to, inherited_cp=child_cp)
                 if self._stop:
-                    _um(move); _ap(acc, acc_stack)
+                    _um(move); acc = acc_stack.pop(); self._acc = acc
                     cnt = rep[new_h] - 1
                     if cnt <= 0: del rep[new_h]
                     else:        rep[new_h] = cnt
                     return 0
                 if score > alpha:
-                    score = -self._negamax(board, search_depth, -beta, -alpha, ply + 1, new_h, True, fr, pc, to)
+                    score = -self._negamax(board, search_depth, -beta, -alpha, ply + 1,
+                                           new_h, True, fr, pc, to, inherited_cp=child_cp)
             else:
-                score = -self._negamax(board, search_depth, -beta, -alpha, ply + 1, new_h, True, fr, pc, to)
-            _um(move); _ap(acc, acc_stack)
+                score = -self._negamax(board, search_depth, -beta, -alpha, ply + 1,
+                                       new_h, True, fr, pc, to, inherited_cp=child_cp)
+            _um(move); acc = acc_stack.pop(); self._acc = acc
             cnt = rep[new_h] - 1
             if cnt <= 0: del rep[new_h]
             else:        rep[new_h] = cnt
@@ -833,7 +844,9 @@ class Searcher:
             return (None, 0)
         root_h = _full_hash(board)
         best_move = root_moves[0]
-        best_score = _fast_eval(self._acc, board.turn)
+        acc = self._acc
+        root_raw_cp = _nnue_output(acc)
+        best_score = root_raw_cp if board.turn == WHITE else -root_raw_cp
         prev_best = best_move
         for depth in range(1, MAX_DEPTH + 1):
             if self._stop: break
@@ -854,12 +867,15 @@ class Searcher:
                     self.nodes += 1
                     new_h = _delta_hash(board, move, root_h)
                     rep[new_h] = rep.get(new_h, 0) + 1
-                    _score_delta(board, move, acc, acc_stack)
+                    acc, child_cp = _score_delta(board, move, acc, acc_stack)
+                    self._acc = acc
                     pc = move >> 16 & 7; to = move >> 6 & 63; fr = move & 63
                     board.make_move(move)
-                    score = -self._negamax(board, depth - 1, -aw_hi, -alpha, 1, new_h, True, fr, pc, to)
+                    score = -self._negamax(board, depth - 1, -aw_hi, -alpha, 1, new_h, True,
+                                          fr, pc, to, inherited_cp=child_cp)
                     board.unmake_move(move)
-                    _acc_pop(acc, acc_stack)
+                    acc = acc_stack.pop()
+                    self._acc = acc
                     cnt = rep[new_h] - 1
                     if cnt <= 0: del rep[new_h]
                     else:        rep[new_h] = cnt
