@@ -6,7 +6,7 @@ A high-performance, UCI-compatible chess engine written in pure Python, featurin
 * **Elo Progression:**
     * PureChess 1.0: 1309 Elo
     * PureChess 1.1: 1351 Elo
-    * **PureChess 2.0: 1460 Elo** (vs. Bullitchess 1.0 @ 1500 Elo)
+    * **PureChess 2.0: 1310 Elo** (vs. Bullitchess 1.0 @ 1500 Elo)
 * **Match Stats (2.0 vs Bullitchess 1.0):** 174-216 (Excluding time-outs)
 
 ## Technical Architecture
