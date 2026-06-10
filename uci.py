@@ -53,7 +53,7 @@ def check_opening_book(board):
         'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'e4d5',
         'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'b1c3',
         'rnbqkbnr/ppppp1pp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'e4f5',
-        'rnbqkbnr/pppppp1p/8/6p1/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
+        'rnbqkbnr/pppppp17/8/6p1/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
         'rnbqkbnr/ppppppp1/8/7p/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
         'r1bqkbnr/pppppppp/n7/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'g1f3',
         'r1bqkbnr/pppppppp/2n7/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
@@ -77,6 +77,40 @@ def parse_time_to_ms(t_str):
         return int(float(s_str))
     except:
         return 60000
+def _perft(board, depth):
+    if depth == 0:
+        return 1
+    moves = generate_legal_moves(board)
+    if depth == 1:
+        return len(moves)
+    nodes = 0
+    for move in moves:
+        board.make_move(move)
+        nodes += _perft(board, depth - 1)
+        board.unmake_move(move)
+    return nodes
+def run_perft(board, depth, divide=False):
+    import time
+    start = time.time()
+    if divide:
+        total = 0
+        for move in generate_legal_moves(board):
+            board.make_move(move)
+            count = _perft(board, depth - 1)
+            board.unmake_move(move)
+            print(f'{move_to_uci(move)}: {count}')
+            sys.stdout.flush()
+            total += count
+        elapsed = time.time() - start
+        print(f'\nNodes searched: {total}')
+        print(f'Time: {elapsed:.3f}s  NPS: {int(total / elapsed) if elapsed > 0 else 0}')
+        return total
+    else:
+        nodes = _perft(board, depth)
+        elapsed = time.time() - start
+        print(f'info depth {depth} nodes {nodes} time {int(elapsed * 1000)} nps {int(nodes / elapsed) if elapsed > 0 else 0}')
+        print(f'Nodes searched: {nodes}')
+        return nodes
 def main():
     board = Board.from_fen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
     searcher = Searcher()
@@ -153,6 +187,14 @@ def main():
             except Exception:
                 legal = generate_legal_moves(board)
                 print(f"bestmove {(move_to_uci(legal[0]) if legal else '0000')}")
+        elif command == 'perft':
+            try:
+                depth = int(parts[1]) if len(parts) > 1 else 1
+                depth = max(1, depth)
+                divide = len(parts) > 2 and parts[2].lower() == 'divide'
+                run_perft(board, depth, divide)
+            except Exception as e:
+                print(f'info string perft error: {e}')
         elif command == 'eval':
             acc      = _full_score(board)
             nnue_raw = _nnue_output(acc)
