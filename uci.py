@@ -53,7 +53,7 @@ def check_opening_book(board):
         'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'e4d5',
         'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'b1c3',
         'rnbqkbnr/ppppp1pp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'e4f5',
-        'rnbqkbnr/pppppp17/8/6p1/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
+        'rnbqkbnr/pppppp1p/8/6p1/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
         'rnbqkbnr/ppppppp1/8/7p/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
         'r1bqkbnr/pppppppp/n7/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'g1f3',
         'r1bqkbnr/pppppppp/2n7/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -': 'd2d4',
